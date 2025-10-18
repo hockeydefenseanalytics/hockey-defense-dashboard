@@ -1,6 +1,19 @@
-// /api/game?id=2024020156
-// Returns team-level defensive metrics for a single game using NHL's public stats feed.
-// No imports needed (Node 18+ has global fetch).
+// /api/game?id=2023020001
+// Team-level defensive metrics for a single game via NHL public feed (Node 18 on Vercel).
+
+const UA = {
+  headers: {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+    "Accept": "application/json"
+  },
+  // 10s timeout via AbortController
+  signal: (() => {
+    const c = new AbortController();
+    setTimeout(() => c.abort(), 10000);
+    return c.signal;
+  })()
+};
 
 const isSlot = (x, y) => x != null && y != null && Math.abs(x) < 25 && Math.abs(y) < 20;
 const pct = (g, t) => (t ? (100 * g) / t : null);
@@ -16,15 +29,30 @@ const toMetrics = c => {
   return { zdr, sbr, nrr, dpi: toDPI(zdr, sbr, nrr) };
 };
 
-export default async function handler(req, res) {
+async function fetchNHLFeed(gameId) {
+  const url = `https://statsapi.web.nhl.com/api/v1/game/${gameId}/feed/live`;
+  try {
+    const r = await fetch(url, UA);
+    if (!r.ok) throw new Error(`nhl_http_${r.status}`);
+    return await r.json();
+  } catch (e) {
+    // Fallback to http if https has TLS oddities
+    try {
+      const r2 = await fetch(`http://statsapi.web.nhl.com/api/v1/game/${gameId}/feed/live`, UA);
+      if (!r2.ok) throw new Error(`nhl_http_${r2.status}`);
+      return await r2.json();
+    } catch (e2) {
+      throw new Error(`nhl_fetch_failed:${e2.message}`);
+    }
+  }
+}
+
+module.exports = async function handler(req, res) {
   try {
     const id = req.query.id;
     if (!id) return res.status(400).json({ error: "id required" });
 
-    const feedRes = await fetch(`https://statsapi.web.nhl.com/api/v1/game/${id}/feed/live`);
-    if (!feedRes.ok) return res.status(502).json({ error: "nhl_feed_unavailable" });
-    const data = await feedRes.json();
-
+    const data = await fetchNHLFeed(id);
     const plays = data?.liveData?.plays?.allPlays ?? [];
     const homeName = data?.gameData?.teams?.home?.name ?? "Home";
     const awayName = data?.gameData?.teams?.away?.name ?? "Away";
@@ -33,9 +61,7 @@ export default async function handler(req, res) {
     const away = initCounters();
     const bucket = team => (team === homeName ? home : away);
 
-    // Heuristics for MVP (improve later with tracking/possession):
-    // - NFR opportunity: quick opponent follow-up after a shot → counts against defending team
-    // - Slot-pass opportunity: slot shot right after turnover/hit; HIT → treat as broken_up (good)
+    // MVP heuristics
     for (let i = 0; i < plays.length; i++) {
       const p = plays[i];
       const t = p?.result?.eventTypeId;
@@ -45,25 +71,22 @@ export default async function handler(req, res) {
       const defTeam = shootTeam === homeName ? awayName : homeName;
       const B = bucket(defTeam);
 
-      // Net-front rebound proxy
+      // Net-front rebound opportunity (opponent follows with a quick shot)
       if (t === "SHOT" || t === "GOAL" || t === "MISSED_SHOT" || t === "BLOCKED_SHOT") {
         const next = plays[i + 1];
         const nextTeam = next?.team?.name;
         if (next && nextTeam && nextTeam !== shootTeam) {
           B.nfr.t++;
-          // If you want to credit defensive recoveries, detect goalie freezes; for MVP, leave good=0 (opp recovery).
         }
       }
 
-      // Slot-pass proxy
+      // Slot-pass opportunity proxy (slot shot shortly after turnover/hit)
       if (t === "SHOT" && isSlot(x, y)) {
         const prev = plays[i - 1];
         const prevT = prev?.result?.eventTypeId;
         B.slot.t++;
-        if (prevT === "HIT") B.slot.g++; // treat as broken_up
+        if (prevT === "HIT") B.slot.g++; // treat HIT as break-up
       }
-
-      // Entry denial (ZDR) is left for a future improvement (needs stronger possession logic).
     }
 
     res.setHeader("Cache-Control", "public, max-age=300");
@@ -72,6 +95,6 @@ export default async function handler(req, res) {
       away: { team: awayName, metrics: toMetrics(away) }
     });
   } catch (e) {
-    return res.status(500).json({ error: e.message || "server_error" });
+    return res.status(502).json({ error: String(e.message || e) });
   }
-}
+};
