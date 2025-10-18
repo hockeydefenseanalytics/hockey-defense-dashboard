@@ -1,11 +1,25 @@
 // api/test.js
-export default async function handler(req, res) {
+// Quick check that your server can fetch NHL EDGE.
+// Visit: https://hockey-defense-dashboard.vercel.app/api/test
+module.exports.config = { runtime: "nodejs20.x" };
+
+module.exports = async function handler(req, res) {
   try {
     const url = "https://api-web.nhle.com/v1/schedule/now";
-    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+        "Referer": "https://www.nhl.com/"
+      }
+    });
     const data = await r.json();
-    res.status(200).json({ ok: true, sample: data?.gameWeek?.[0]?.games?.[0] });
+    res.status(200).json({
+      ok: true,
+      status: r.status,
+      sample: data?.gameWeek?.[0]?.games?.[0] ?? null
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(502).json({ ok: false, error: String(err.message || err) });
   }
-}
+};
