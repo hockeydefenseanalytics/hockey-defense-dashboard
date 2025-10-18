@@ -1,19 +1,5 @@
 // /api/game?id=2023020001
-// Team-level defensive metrics for a single game via NHL public feed (Node 18 on Vercel).
-
-const UA = {
-  headers: {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-    "Accept": "application/json"
-  },
-  // 10s timeout via AbortController
-  signal: (() => {
-    const c = new AbortController();
-    setTimeout(() => c.abort(), 10000);
-    return c.signal;
-  })()
-};
+module.exports.config = { runtime: "nodejs20.x" };   // ← add this line
 
 const isSlot = (x, y) => x != null && y != null && Math.abs(x) < 25 && Math.abs(y) < 20;
 const pct = (g, t) => (t ? (100 * g) / t : null);
@@ -29,30 +15,22 @@ const toMetrics = c => {
   return { zdr, sbr, nrr, dpi: toDPI(zdr, sbr, nrr) };
 };
 
-async function fetchNHLFeed(gameId) {
-  const url = `https://statsapi.web.nhl.com/api/v1/game/${gameId}/feed/live`;
-  try {
-    const r = await fetch(url, UA);
-    if (!r.ok) throw new Error(`nhl_http_${r.status}`);
-    return await r.json();
-  } catch (e) {
-    // Fallback to http if https has TLS oddities
-    try {
-      const r2 = await fetch(`http://statsapi.web.nhl.com/api/v1/game/${gameId}/feed/live`, UA);
-      if (!r2.ok) throw new Error(`nhl_http_${r2.status}`);
-      return await r2.json();
-    } catch (e2) {
-      throw new Error(`nhl_fetch_failed:${e2.message}`);
-    }
-  }
-}
-
+// optional headers+timeout (kept simple here)
 module.exports = async function handler(req, res) {
   try {
     const id = req.query.id;
     if (!id) return res.status(400).json({ error: "id required" });
 
-    const data = await fetchNHLFeed(id);
+    const r = await fetch(`https://statsapi.web.nhl.com/api/v1/game/${id}/feed/live`, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        "Accept": "application/json"
+      }
+    });
+    if (!r.ok) return res.status(502).json({ error: `nhl_http_${r.status}` });
+    const data = await r.json();
+
     const plays = data?.liveData?.plays?.allPlays ?? [];
     const homeName = data?.gameData?.teams?.home?.name ?? "Home";
     const awayName = data?.gameData?.teams?.away?.name ?? "Away";
@@ -61,7 +39,6 @@ module.exports = async function handler(req, res) {
     const away = initCounters();
     const bucket = team => (team === homeName ? home : away);
 
-    // MVP heuristics
     for (let i = 0; i < plays.length; i++) {
       const p = plays[i];
       const t = p?.result?.eventTypeId;
@@ -71,21 +48,16 @@ module.exports = async function handler(req, res) {
       const defTeam = shootTeam === homeName ? awayName : homeName;
       const B = bucket(defTeam);
 
-      // Net-front rebound opportunity (opponent follows with a quick shot)
       if (t === "SHOT" || t === "GOAL" || t === "MISSED_SHOT" || t === "BLOCKED_SHOT") {
         const next = plays[i + 1];
         const nextTeam = next?.team?.name;
-        if (next && nextTeam && nextTeam !== shootTeam) {
-          B.nfr.t++;
-        }
+        if (next && nextTeam && nextTeam !== shootTeam) B.nfr.t++;
       }
-
-      // Slot-pass opportunity proxy (slot shot shortly after turnover/hit)
       if (t === "SHOT" && isSlot(x, y)) {
         const prev = plays[i - 1];
         const prevT = prev?.result?.eventTypeId;
         B.slot.t++;
-        if (prevT === "HIT") B.slot.g++; // treat HIT as break-up
+        if (prevT === "HIT") B.slot.g++;
       }
     }
 
