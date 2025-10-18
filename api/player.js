@@ -1,6 +1,18 @@
 // /api/player?name=Jonas%20Brodin&season=career
-// Returns player defensive card data using MoneyPuck + placeholders for offense and team context.
-// No imports needed (Node 18+ has global fetch).
+// Player defensive card via MoneyPuck (NRR) + placeholders for offense/context.
+
+const UA = {
+  headers: {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+    "Accept": "text/csv,application/json"
+  },
+  signal: (() => {
+    const c = new AbortController();
+    setTimeout(() => c.abort(), 10000);
+    return c.signal;
+  })()
+};
 
 const pct = (g, t) => (t ? (100 * g) / t : null);
 const toDPI = (z, s, n) => {
@@ -15,51 +27,56 @@ const toMetrics = counts => {
   return { zdr, sbr, nrr, dpi: toDPI(zdr, sbr, nrr) };
 };
 
-// Resolve MoneyPuck player id by name
 async function moneyPuckPlayerId(name) {
-  const csv = await (await fetch("https://moneypuck.com/data/playersByName/playersByName.csv")).text();
-  const [headLine, ...rows] = csv.split(/\r?\n/).filter(Boolean);
-  const head = headLine.split(",");
+  const url = "https://moneypuck.com/data/playersByName/playersByName.csv";
+  const csv = await (await fetch(url, UA)).text();
+  const lines = csv.split(/\r?\n/).filter(Boolean);
+  const head = lines.shift().split(",");
   const iName = head.findIndex(h => h.toLowerCase() === "name");
   const iId = head.findIndex(h => h.toLowerCase() === "playerid");
-  const hit = rows
-    .map(r => r.split(","))
-    .find(r => (r[iName] || "").toLowerCase() === name.toLowerCase());
+
+  // fuzzy match: exact (case-insensitive) → startsWith → includes
+  const norm = s => (s || "").trim().toLowerCase();
+  const target = norm(name);
+  const rows = lines.map(l => l.split(",")).filter(r => r[iName]);
+
+  let hit =
+    rows.find(r => norm(r[iName]) === target) ||
+    rows.find(r => norm(r[iName]).startsWith(target)) ||
+    rows.find(r => norm(r[iName]).includes(target));
+
   return hit ? hit[iId] : null;
 }
 
-// Build NFR counts from MoneyPuck game-by-game (MVP: only NFR is populated)
 async function moneyPuckNRRCounts(name) {
-  const pid = await moneyPuckPlayerId(name);
-  if (!pid) return { counts: JSON.parse(JSON.stringify(blankCounts)), trend: [] };
-  const gbg = await (await fetch(`https://moneypuck.com/moneypuck/playerData/careerSkaterGameByGame/${pid}.csv`)).text();
-  const [headLine, ...rows] = gbg.split(/\r?\n/).filter(Boolean);
-  const head = headLine.split(",");
-  const iRebAg = head.findIndex(h => h.toLowerCase() === "reboundsagainst");
-
   const counts = JSON.parse(JSON.stringify(blankCounts));
   const trend = [];
-  for (const line of rows) {
+  const pid = await moneyPuckPlayerId(name);
+  if (!pid) return { counts, trend };
+
+  const url = `https://moneypuck.com/moneypuck/playerData/careerSkaterGameByGame/${pid}.csv`;
+  const gbg = await (await fetch(url, UA)).text();
+  const lines = gbg.split(/\r?\n/).filter(Boolean);
+  const head = lines.shift().split(",");
+  const iRebAg = head.findIndex(h => h.toLowerCase() === "reboundsagainst");
+
+  for (const line of lines) {
     const r = line.split(",");
     const ra = Number(r[iRebAg] || 0);
     counts.nfr.total += ra;
-    // Without tracking we can't attribute defensive recoveries reliably; keep good=0 for MVP.
-    trend.push(Math.max(0, 100 - Math.min(ra * 4, 100))); // playful DPI-ish spark proxy
+    // good recoveries require tracking; MVP keeps good=0
+    trend.push(Math.max(0, 100 - Math.min(ra * 4, 100)));
   }
   return { counts, trend: trend.slice(-10) };
 }
 
-// Minimal placeholders for headshot/offense/team context (fill later)
-async function nhlPlayerMeta(name) {
-  // You can improve this by hitting NHL's /people endpoints and team rosters.
-  return { team: "", position: "", headshot: "" };
-}
+// Placeholders (fill later if you want)
+async function nhlPlayerMeta(name) { return { team: "", position: "", headshot: "" }; }
 async function nhlOffenseAndWins(name, season) {
-  // TODO: implement from NHL team+player game logs. MVP returns blanks.
   return { offense: { g: 0, a: 0, p: 0, xgf_on: 0, goal_diff_on: 0 }, team_context: { wins: 0, win_pct: 0, avg_toi: 0 } };
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
     const name = String(req.query.name || "").trim();
     const season = String(req.query.season || "career");
@@ -83,6 +100,6 @@ export default async function handler(req, res) {
       team_context: ctx.team_context
     });
   } catch (e) {
-    return res.status(500).json({ error: e.message || "server_error" });
+    return res.status(502).json({ error: String(e.message || e) });
   }
-}
+};
