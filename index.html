@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hockey Defensive Dashboard</title>
+  <style>
+    :root{--bg:#0b1220;--card:#111a2b;--text:#e8eefc;--muted:#8ca0c8;--a:#6dd5fa;--b:#1e88e5;--ok:#2ecc71;--mid:#f1c40f;--bad:#e74c3c;}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;background:linear-gradient(180deg,#0b1220,#0f1730);color:var(--text)}
+    .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
+    h1{margin:0 0 6px;font-size:28px} .lead{color:var(--muted);margin:0 0 18px}
+    .grid{display:grid;gap:16px} .g-2{grid-template-columns:repeat(2,minmax(0,1fr))} @media (max-width:900px){.g-2{grid-template-columns:1fr}}
+    .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .pad{padding:16px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    select,input,button{padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:#0a1328;color:var(--text)}
+    button{background:linear-gradient(135deg,#1e88e5,#6dd5fa);border:none;cursor:pointer;font-weight:700}
+    .muted{color:var(--muted)} .pill{display:inline-block;border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}
+    .bar{width:100%;height:12px;background:#0a1328;border-radius:999px;border:1px solid rgba(255,255,255,.1);overflow:hidden;margin:6px 0}
+    .fill-a{height:100%;background:linear-gradient(90deg,#1e88e5,#6dd5fa);width:0}
+    .fill-b{height:100%;background:linear-gradient(90deg,#6dd5fa,#1e88e5);width:0}
+    .kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    @media (max-width:700px){.kpi{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    img.head{width:96px;height:96px;border-radius:12px;object-fit:cover;border:1px solid rgba(255,255,255,.15)}
+    canvas{display:block}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Hockey Defensive Dashboard</h1>
+    <p class="lead">Type a <strong>Player</strong> or <strong>NHL Game ID</strong>. The site pulls public data, computes <strong>ZDR</strong> (zone denial), <strong>SBR</strong> (slot breakups), <strong>NRR</strong> (net-front recoveries), and overall <strong>DPI</strong>.</p>
+
+    <div class="grid g-2">
+      <!-- Search -->
+      <section class="card">
+        <div class="pad">
+          <h2>Search</h2>
+          <div class="row">
+            <select id="searchType">
+              <option value="player">Player</option>
+              <option value="game">Game</option>
+            </select>
+            <input id="searchValue" placeholder='e.g., "Jonas Brodin" or 2024020156' />
+            <button id="btnFetch">Fetch</button>
+          </div>
+          <p class="muted" style="margin-top:8px">The page calls <code>/api/player?name=...</code> or <code>/api/game?id=...</code> automatically.</p>
+        </div>
+      </section>
+
+      <!-- Quick help -->
+      <section class="card">
+        <div class="pad">
+          <h2>What you’ll see</h2>
+          <ul>
+            <li><strong>Player Card:</strong> Headshot, DPI, ZDR/SBR/NRR bars, opportunity counts, offense, 10-game trend, team context.</li>
+            <li><strong>Game View
